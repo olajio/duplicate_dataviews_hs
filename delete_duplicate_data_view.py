@@ -1,9 +1,11 @@
 import sys
+import json
 import requests
 import logging
 from collections import defaultdict
 from argparse import ArgumentParser
 from datetime import datetime
+from urllib.parse import urlparse
 import pytz
 import os
 import base64
@@ -91,24 +93,57 @@ def get_headers(api_key):
     return headers
 
 
+# Derive the GitHub REST API base and 'owner/repo' from a repo web URL.
+# Works for github.com ('https://github.com/<owner>/<repo>') as well as a
+# GitHub Enterprise host ('https://<host>/<owner>/<repo>'), so a future host
+# change does not require editing the upload functions.
+def parse_github_repo(repo_url):
+    parsed = urlparse(repo_url)
+    host = parsed.netloc
+    path = parsed.path.strip("/")
+    if path.endswith(".git"):
+        path = path[:-4]
+    # Keep only '<owner>/<repo>' even if the URL has extra path segments
+    owner_repo = "/".join(path.split("/")[:2])
+    if host == "github.com":
+        api_base = "https://api.github.com"
+    else:
+        # GitHub Enterprise Server REST API lives under /api/v3
+        api_base = f"{parsed.scheme}://{host}/api/v3"
+    return api_base, owner_repo
+
+
+# Set up headers for github.com REST API authentication (token-based).
+# github.com uses a Bearer Personal Access Token rather than Basic auth.
+def get_github_headers(github_key):
+    headers = {
+        'Accept': 'application/vnd.github+json',
+        'Authorization': f'Bearer {github_key}',
+        'X-GitHub-Api-Version': '2022-11-28'
+    }
+    return headers
+
+
 # Check-in files to a new github branch
 def upload_file_to_github(repo_url, github_username, github_key, local_file_path, repo_file_path, github_branch, timestamp):
     commit_message = f"Uploaded object via script at {timestamp}"
 
-    # Extract repo details from the URL
-    repo = repo_url.split("https://ghe.hedgeserv.net/")[1]
-    api_url = f"https://ghe.hedgeserv.net/api/v3/repos/{repo}"
+    # Derive the REST API base and owner/repo from the repo URL, then build the
+    # token-based auth headers for github.com.
+    api_base, repo = parse_github_repo(repo_url)
+    api_url = f"{api_base}/repos/{repo}"
+    github_headers = get_github_headers(github_key)
 
     # Step 1: Get the default branch's SHA
     repo_info_url = f"{api_url}"
-    repo_info_response = requests.get(repo_info_url, auth=(github_username, github_key))
+    repo_info_response = requests.get(repo_info_url, headers=github_headers)
     if repo_info_response.status_code != 200:
         print(f"Error retrieving repository info: {repo_info_response.status_code} : {repo_info_response.text}")
         raise Exception("Failed to retrieve repository information.")
 
     default_branch = repo_info_response.json().get("default_branch", "main")
     default_branch_url = f"{api_url}/git/ref/heads/{default_branch}"
-    default_branch_response = requests.get(default_branch_url, auth=(github_username, github_key))
+    default_branch_response = requests.get(default_branch_url, headers=github_headers)
     if default_branch_response.status_code != 200:
         print(f"Error retrieving default branch '{default_branch}': {default_branch_response.text}")
         raise Exception("Default branch not found.")
@@ -121,7 +156,7 @@ def upload_file_to_github(repo_url, github_username, github_key, local_file_path
         "ref": f"refs/heads/{github_branch}",
         "sha": default_branch_sha
     }
-    create_branch_response = requests.post(create_branch_url, json=payload, auth=(github_username, github_key))
+    create_branch_response = requests.post(create_branch_url, json=payload, headers=github_headers)
     if create_branch_response.status_code == 201:
         print(f"Branch '{github_branch}' created successfully.")
     else:
@@ -141,7 +176,7 @@ def upload_file_to_github(repo_url, github_username, github_key, local_file_path
     }
 
     # Step 5: Upload the file
-    response = requests.put(file_url, json=payload, auth=(github_username, github_key))
+    response = requests.put(file_url, json=payload, headers=github_headers)
     if response.status_code in (200, 201):
         print(f"File successfully uploaded to '{repo_url}/{repo_file_path}' on branch '{github_branch}'.")
     else:
@@ -153,9 +188,11 @@ def upload_file_to_existing_github(repo_url, github_username, github_key, local_
     # Commit message
     commit_message = f"Log file uploaded via script at {timestamp}"
 
-    # Parse repository owner and name from the URL
-    repo = repo_url.split("https://ghe.hedgeserv.net/")[1]
-    api_url = f"https://ghe.hedgeserv.net/api/v3/repos/{repo}/contents/{repo_file_path}"
+    # Derive the REST API base and owner/repo from the repo URL, then build the
+    # token-based auth headers for github.com.
+    api_base, repo = parse_github_repo(repo_url)
+    api_url = f"{api_base}/repos/{repo}/contents/{repo_file_path}"
+    github_headers = get_github_headers(github_key)
 
     # Read the local file and encode it
     with open(local_file_path, "rb") as file:
@@ -169,7 +206,7 @@ def upload_file_to_existing_github(repo_url, github_username, github_key, local_
     }
 
     # Upload or update the file to Github
-    response = requests.put(api_url, json=payload, auth=(github_username, github_key))
+    response = requests.put(api_url, json=payload, headers=github_headers)
     if response.status_code in (200, 201):
         print(f"File successfully uploaded to '{repo_url}/{repo_file_path}' on branch '{github_branch}'.")
         print("")
@@ -212,24 +249,25 @@ def export_all_kibana_objects(all_kibana_objects, num_of_kibana_objects, headers
     export_objects_endpoint = f"{kibana_url}/s/{space_id}/api/saved_objects/_export"
     OUTPUT_FILE = "kibana_objects.ndjson"  # Path to save the exported objects
     logging.info(f"Exporting all Kibana objects in space: '{space_id}' to the '{OUTPUT_FILE}'. This would be used to restore all objects in case something goes wrong...")
-    if dry_run:
-        logging.info(f"[DRY-RUN] Would Export all Kibana objects in this space: '{space_id}' using the Saved Objects API and save to an NDJSON file: '{OUTPUT_FILE}'")
-    else:
-        if num_of_kibana_objects > 0:
-            payload = {
-                "objects": all_kibana_objects,
-                "includeReferencesDeep": True
-            }
-            response = requests.post(export_objects_endpoint, headers=headers, json=payload)
-            if response.status_code == 200:
-                with open(OUTPUT_FILE, "w") as file:
-                    file.write(response.text)
-                logging.info(f"All {num_of_kibana_objects} Kibana objects are successfully backed-up to the '{OUTPUT_FILE}' file")
-            else:
-                logging.error(f"Failed to export objects. Status code: {response.status_code}, Response: : {get_response.text}")
+    # NOTE: The export is a read-only Saved Objects _export call plus a local file
+    # write (no Kibana mutation), so it runs in dry-run too, consistent with how
+    # data-view backups and the log file are already checked in during dry-run.
+    # This file is required by the GitHub backup step that follows.
+    if num_of_kibana_objects > 0:
+        payload = {
+            "objects": all_kibana_objects,
+            "includeReferencesDeep": True
+        }
+        response = requests.post(export_objects_endpoint, headers=headers, json=payload)
+        if response.status_code == 200:
+            with open(OUTPUT_FILE, "w") as file:
+                file.write(response.text)
+            logging.info(f"All {num_of_kibana_objects} Kibana objects are successfully backed-up to the '{OUTPUT_FILE}' file")
         else:
-            logging.info(f"There are no Kibana objects to back-up. The '{OUTPUT_FILE}' file is not updated")
-        return OUTPUT_FILE
+            logging.error(f"Failed to export objects. Status code: {response.status_code}, Response: {response.text}")
+    else:
+        logging.info(f"There are no Kibana objects to back-up. The '{OUTPUT_FILE}' file is not updated")
+    return OUTPUT_FILE
 
 
 # Function to get all data views in the space ID specified
@@ -510,7 +548,9 @@ if __name__ == "__main__":
     # Get timestamp
     timestamp = set_timestamp()
 
-    repo_url = "https://ghe.hedgeserv.net/ITSMA/delete_duplicate_data_view"
+    # MIGRATED: github.com replaces ghe.hedgeserv.net.
+    # TODO: confirm the correct org/repo on github.com (e.g. hsv-internal) before running.
+    repo_url = "https://github.com/<ORG>/delete_duplicate_data_view"
     github_branch = f"{github_username}_{cluster_name}_{space_id}_{timestamp}"
 
     object_types = get_object_types()

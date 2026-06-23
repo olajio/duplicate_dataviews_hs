@@ -550,7 +550,7 @@ if __name__ == "__main__":
 
     # MIGRATED: github.com replaces ghe.hedgeserv.net.
     # TODO: confirm the correct org/repo on github.com (e.g. hsv-internal) before running.
-    repo_url = "https://github.com/<ORG>/delete_duplicate_data_view"
+    repo_url = "https://github.com/oolajide_HSV/delete_duplicate_data_view"
     github_branch = f"{github_username}_{cluster_name}_{space_id}_{timestamp}"
 
     object_types = get_object_types()

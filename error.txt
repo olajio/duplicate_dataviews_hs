@@ -1,0 +1,38 @@
+HSE-NYC-MAC-142:PycharmProjects oolajide$ pwd
+/Users/oolajide/PycharmProjects
+HSE-NYC-MAC-142:PycharmProjects oolajide$ ls -la
+total 280
+drwxr-xr-x  17 oolajide  FDS\Domain Users    544 Jun 23 16:21 .
+drwxr-xr-x+ 56 oolajide  FDS\Domain Users   1792 Mar  9 00:39 ..
+-rw-r--r--@  1 oolajide  FDS\Domain Users   6148 Mar 11 22:35 .DS_Store
+-rw-r--r--   1 oolajide  FDS\Domain Users  25777 Oct  2  2025 51010
+-rw-r--r--   1 oolajide  FDS\Domain Users  30068 Dec  5  2025 agent_restart_new_api.py
+-rw-r--r--   1 oolajide  FDS\Domain Users  24926 Jun 23 16:23 delete_duplicate_data_view.py
+drwxr-xr-x@ 93 oolajide  FDS\Domain Users   2976 Apr 14 11:39 dup_dataview
+-rw-r--r--   1 oolajide  FDS\Domain Users   1810 Jun 23 15:47 log_file_2026_06_23_16_46_50.log
+-rw-r--r--   1 oolajide  FDS\Domain Users   1723 Jun 23 15:58 log_file_2026_06_23_16_58_18.log
+-rw-r--r--   1 oolajide  FDS\Domain Users   1881 Jun 23 16:05 log_file_2026_06_23_17_05_05.log
+-rw-r--r--   1 oolajide  FDS\Domain Users   1881 Jun 23 16:07 log_file_2026_06_23_17_07_01.log
+-rw-r--r--   1 oolajide  FDS\Domain Users   1881 Jun 23 16:07 log_file_2026_06_23_17_07_23.log
+-rw-r--r--   1 oolajide  FDS\Domain Users   1881 Jun 23 16:21 log_file_2026_06_23_17_21_42.log
+-rw-r--r--   1 oolajide  FDS\Domain Users  10088 Sep 18  2025 snowflake_elastic.py
+-rw-r--r--   1 oolajide  FDS\Domain Users   3649 Sep 18  2025 snowflake_elastic_old.py
+-rw-r--r--   1 oolajide  FDS\Domain Users     20 Jun 23 14:39 test.txt
+drwxr-xr-x  11 oolajide  FDS\Domain Users    352 Aug 15  2024 watcher
+HSE-NYC-MAC-142:PycharmProjects oolajide$ python3 delete_duplicate_data_view.py --kibana_url 'https://e001708f0fe44a4d96341be1bf9a9943.us-east-1.aws.found.io:9243'   --api_key 'KEY_PLACE_HOLDER==' --cluster_name dev --space_id test_space_ola   --dry_run True --github_username oolajide_HSV --github_key "$GH_PAT"
+2026-06-23 16:23:45,749 - INFO - RUNNING THE SCRIPT FOR SPACE: 'test_space_ola' IN ELASTIC CLUSTER: 'dev'
+2026-06-23 16:23:45,749 - INFO - Retrieving all Kibana objects in space: 'test_space_ola'...
+2026-06-23 16:23:52,571 - INFO - 931 Kibana objects were found in this space: 'test_space_ola'
+2026-06-23 16:23:52,571 - INFO - Exporting all Kibana objects in space: 'test_space_ola' to the 'kibana_objects.ndjson'. This would be used to restore all objects in case something goes wrong...
+2026-06-23 16:23:52,571 - INFO - [DRY-RUN] Would Export all Kibana objects in this space: 'test_space_ola' using the Saved Objects API and save to an NDJSON file: 'kibana_objects.ndjson'
+2026-06-23 16:23:53,654 - INFO - Branch 'oolajide_HSV_dev_test_space_ola_2026_06_23_17_23_45' created successfully.
+2026-06-23 16:23:53,654 - ERROR - Traceback (most recent call last):
+2026-06-23 16:23:53,654 - ERROR - File "/Users/oolajide/PycharmProjects/delete_duplicate_data_view.py", line 556, in <module>
+2026-06-23 16:23:53,655 - ERROR - main(kibana_url, headers, space_id, dry_run)
+2026-06-23 16:23:53,655 - ERROR - File "/Users/oolajide/PycharmProjects/delete_duplicate_data_view.py", line 436, in main
+2026-06-23 16:23:53,655 - ERROR - upload_file_to_github(repo_url, github_username, github_key, local_file_path, repo_file_path, github_branch, timestamp)
+2026-06-23 16:23:53,655 - ERROR - File "/Users/oolajide/PycharmProjects/delete_duplicate_data_view.py", line 166, in upload_file_to_github
+2026-06-23 16:23:53,655 - ERROR - with open(local_file_path, "rb") as file:
+2026-06-23 16:23:53,655 - ERROR - FileNotFoundError
+2026-06-23 16:23:53,655 - ERROR - :
+2026-06-23 16:23:53,655 - ERROR - [Errno 2] No such file or directory: 'None'

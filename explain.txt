@@ -1,0 +1,8 @@
+Change to Write Access for service-elasticauto on 1 Github repos - https://github.com/hsv-internal/delete_duplicate_data_view
+Current access for the service account is read.
+
+Reason for the change in access:
+
+We have a script that scans all of our Kibana spaces and check if there are duplicate data views. (If duplicate data views exists, that could cause some data quality issues). This script then delete the duplicates and keep one of the data views. But before deleting the duplicates, it points other kibana objects such as saves search, visualizations, lenses and dashboards to the data view that is being retained while deleing the duplicates. It also backs up the kibana objects that are being updated in case those backups are needed to restore to a previous state. These backups are being uploaded to Github into a branch that is created when the script runs. It also uploads the script logs to the same branch for audit purposes.
+
+he has no idea what you're talking about lol

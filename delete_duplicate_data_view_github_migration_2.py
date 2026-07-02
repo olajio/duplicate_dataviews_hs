@@ -9,6 +9,14 @@ from urllib.parse import urlparse
 import pytz
 import os
 import base64
+import boto3
+from botocore.exceptions import ClientError
+
+
+# AWS Secrets Manager secret holding the github.com service-account credentials
+# (keys: 'user', 'password'). Shared across clusters, so it's a constant rather
+# than derived from --cluster_name.
+GITHUB_SECRET_NAME = "github_hsv_internal/itsma/service_elastic_auto_HSV"
 
 
 # dev_kibana_url = 'https://e001708f0fe44a4d96341be1bf9a9943.us-east-1.aws.found.io:9243'
@@ -91,6 +99,22 @@ def get_headers(api_key):
         'Authorization': f'ApiKey {api_key}'
     }
     return headers
+
+
+# Retrieve a JSON secret from AWS Secrets Manager using the default credential
+# chain (IAM role / instance profile / IRSA — no inline credentials). Returns
+# the parsed secret as a dict. Secret values are never logged.
+def get_secret(secret_name, region_name):
+    client = boto3.session.Session().client(
+        service_name="secretsmanager", region_name=region_name
+    )
+    try:
+        response = client.get_secret_value(SecretId=secret_name)
+    except ClientError as e:
+        print(f"Failed to retrieve secret '{secret_name}' from AWS Secrets Manager "
+              f"in region '{region_name}': {e}")
+        raise
+    return json.loads(response["SecretString"])
 
 
 # Derive the GitHub REST API base and 'owner/repo' from a repo web URL.
@@ -520,30 +544,37 @@ def main(kibana_url, headers, space_id, dry_run):
 
 if __name__ == "__main__":
     parser = ArgumentParser(description='Automate the process of cleaning up duplicate data views!')
-    parser.add_argument('--kibana_url', default='None', required=True)
-    parser.add_argument('--api_key', default='None', required=True)
     parser.add_argument('--cluster_name', default='None', choices=['dev', 'qa', 'prod', 'ccs'], required=True)
     parser.add_argument('--space_id', default='None', required=True)
     parser.add_argument('--dry_run', choices=['True', 'False', 'false'], default='True')
-
-    parser.add_argument('--github_username', default='None', required=False)
-    parser.add_argument('--github_key', default='None', required=False)
+    parser.add_argument('--region', default='us-east-1', required=False,
+                        help='AWS region where the Secrets Manager secrets live.')
 
     args = parser.parse_args()
-    kibana_url = args.kibana_url
-    api_key = args.api_key
     cluster_name = args.cluster_name
     space_id = args.space_id
     dry_run = args.dry_run
-
-    github_username = args.github_username
-    github_key = args.github_key
-
+    region = args.region
 
     if dry_run.lower() == 'true':
         dry_run = True
     else:
         dry_run = False
+
+    # Retrieve Kibana/ES credentials from AWS Secrets Manager. One secret per
+    # cluster ('elastic/kibana/dataview_cleanup_<cluster>'), each holding
+    # 'kibana_url' and 'es_api_key'.
+    kibana_secret_name = f"elastic/kibana/dataview_cleanup_{cluster_name}"
+    kibana_secret = get_secret(kibana_secret_name, region)
+    kibana_url = kibana_secret["kibana_url"]
+    api_key = kibana_secret["es_api_key"]
+
+    # Retrieve the github.com service-account credentials from Secrets Manager.
+    # 'user' is the service account name (used only for the branch name);
+    # 'password' is the token used as the Bearer PAT for the github.com REST API.
+    github_secret = get_secret(GITHUB_SECRET_NAME, region)
+    github_username = github_secret["user"]
+    github_key = github_secret["password"]
 
     # Get timestamp
     timestamp = set_timestamp()

@@ -233,7 +233,7 @@ def retrieve_all_kibana_objects(headers, kibana_url, object_types):
             data = data.get("saved_objects", [])
             all_kib_objects.extend([{"id": obj["id"], "type": obj["type"]} for obj in data])
         else:
-            logging.error(f"Failed to retrieve Kibana objects. Status code: {response.status_code}, Response: : {get_response.text}")
+            logging.error(f"Failed to retrieve Kibana objects. Status code: {response.status_code}, Response: {response.text}")
 
     num_of_kibana_objects = len(all_kib_objects)
     logging.info(f"{num_of_kibana_objects} Kibana objects were found in this space: '{space_id}'")
@@ -278,7 +278,7 @@ def get_all_dataviews(space_id, headers, kibana_url):
         response = response.json()
         data_views = response['data_view']
     else:
-        logging.error(f"Failed to GET all Data Views . Status code: {response.status_code}, Response: : {get_response.text}")
+        logging.error(f"Failed to GET all Data Views . Status code: {response.status_code}, Response: {response.text}")
     return data_views
 
 

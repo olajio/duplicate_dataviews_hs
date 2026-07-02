@@ -39,7 +39,7 @@ def get_all_dataviews(space_id, headers, kibana_url):
         response = response.json()
         data_views = response['data_view']
     else:
-        logging.error(f"Failed to GET all Data Views . Status code: {response.status_code}, Response: : {get_response.text}")
+        logging.error(f"Failed to GET all Data Views . Status code: {response.status_code}, Response: {response.text}")
     return data_views
 
 

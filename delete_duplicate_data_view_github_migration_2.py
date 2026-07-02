@@ -13,6 +13,9 @@ import boto3
 from botocore.exceptions import ClientError
 
 
+# AWS region where all the Secrets Manager secrets live.
+AWS_REGION = "us-east-2"
+
 # AWS Secrets Manager secret holding the github.com service-account credentials
 # (keys: 'user', 'password'). Shared across clusters, so it's a constant rather
 # than derived from --cluster_name.
@@ -115,6 +118,16 @@ def get_secret(secret_name, region_name):
               f"in region '{region_name}': {e}")
         raise
     return json.loads(response["SecretString"])
+
+
+# Fetch all Kibana space IDs in the cluster. Used when '--space_id all' is
+# passed so the script can run against every space.
+def list_kibana_space_ids(headers, kibana_url):
+    kibana_space_url = f"{kibana_url}/api/spaces/space"
+    response = requests.get(kibana_space_url, headers=headers, verify=True)
+    response.raise_for_status()
+    spaces = response.json()
+    return [space["id"] for space in spaces]
 
 
 # Derive the GitHub REST API base and 'owner/repo' from a repo web URL.
@@ -261,10 +274,6 @@ def retrieve_all_kibana_objects(headers, kibana_url, object_types):
 
     num_of_kibana_objects = len(all_kib_objects)
     logging.info(f"{num_of_kibana_objects} Kibana objects were found in this space: '{space_id}'")
-    if num_of_kibana_objects == 0:
-        print(f"There are NO Kibana objects in this space: '{space_id}'. No Further action is needed!")
-        print(f"Exiting...")
-        sys.exit(0)
     return all_kib_objects, num_of_kibana_objects
 
 
@@ -456,6 +465,9 @@ def main(kibana_url, headers, space_id, dry_run):
 
     print(f"RUNNING THE SCRIPT FOR SPACE: '{space_id}' IN ELASTIC CLUSTER: '{cluster_name}'")
     all_kibana_objects, num_of_kibana_objects = retrieve_all_kibana_objects(headers, kibana_url, object_types)
+    if num_of_kibana_objects == 0:
+        print(f"There are NO Kibana objects in this space: '{space_id}'. No further action is needed for this space!")
+        return
     kibana_objects = export_all_kibana_objects(all_kibana_objects, num_of_kibana_objects, headers, kibana_url, dry_run)
     local_file_path = f"{kibana_objects}"
     repo_file_path = f"all_objects/{local_file_path}"
@@ -547,32 +559,30 @@ if __name__ == "__main__":
     parser.add_argument('--cluster_name', default='None', choices=['dev', 'qa', 'prod', 'ccs'], required=True)
     parser.add_argument('--space_id', default='None', required=True)
     parser.add_argument('--dry_run', choices=['True', 'False', 'false'], default='True')
-    parser.add_argument('--region', default='us-east-1', required=False,
-                        help='AWS region where the Secrets Manager secrets live.')
 
     args = parser.parse_args()
     cluster_name = args.cluster_name
     space_id = args.space_id
     dry_run = args.dry_run
-    region = args.region
 
     if dry_run.lower() == 'true':
         dry_run = True
     else:
         dry_run = False
 
-    # Retrieve Kibana/ES credentials from AWS Secrets Manager. One secret per
-    # cluster ('elastic/kibana/dataview_cleanup_<cluster>'), each holding
-    # 'kibana_url' and 'es_api_key'.
+    # Retrieve Kibana/ES credentials from AWS Secrets Manager. The secret to use
+    # is selected by --cluster_name: 'elastic/kibana/dataview_cleanup_<cluster>'
+    # (e.g. --cluster_name qa -> 'elastic/kibana/dataview_cleanup_qa'), each
+    # holding 'kibana_url' and 'es_api_key'.
     kibana_secret_name = f"elastic/kibana/dataview_cleanup_{cluster_name}"
-    kibana_secret = get_secret(kibana_secret_name, region)
+    kibana_secret = get_secret(kibana_secret_name, AWS_REGION)
     kibana_url = kibana_secret["kibana_url"]
     api_key = kibana_secret["es_api_key"]
 
     # Retrieve the github.com service-account credentials from Secrets Manager.
     # 'user' is the service account name (used only for the branch name);
     # 'password' is the token used as the Bearer PAT for the github.com REST API.
-    github_secret = get_secret(GITHUB_SECRET_NAME, region)
+    github_secret = get_secret(GITHUB_SECRET_NAME, AWS_REGION)
     github_username = github_secret["user"]
     github_key = github_secret["password"]
 
@@ -582,8 +592,22 @@ if __name__ == "__main__":
     # MIGRATED: github.com replaces ghe.hedgeserv.net.
     # TODO: confirm the correct org/repo on github.com (e.g. hsv-internal) before running.
     repo_url = "https://github.com/oolajide_HSV/delete_duplicate_data_view"
-    github_branch = f"{github_username}_{cluster_name}_{space_id}_{timestamp}"
 
     object_types = get_object_types()
     headers = get_headers(api_key)
-    main(kibana_url, headers, space_id, dry_run)
+
+    # Resolve the target space(s). '--space_id all' runs against every space in
+    # the cluster; otherwise just the single space specified.
+    if space_id == "all":
+        space_ids = list_kibana_space_ids(headers, kibana_url)
+        print(f"'--space_id all' specified: running against all {len(space_ids)} "
+              f"space(s) in cluster '{cluster_name}': {space_ids}")
+    else:
+        space_ids = [space_id]
+
+    # Loop rebinds the module-level 'space_id' and 'github_branch' each iteration
+    # since the export/backup helpers read them as globals. Each space gets its
+    # own per-run branch (unique via space_id) for the export, backups and log.
+    for space_id in space_ids:
+        github_branch = f"{github_username}_{cluster_name}_{space_id}_{timestamp}"
+        main(kibana_url, headers, space_id, dry_run)

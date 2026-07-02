@@ -7,6 +7,9 @@ import boto3
 from botocore.exceptions import ClientError
 
 
+# AWS region where all the Secrets Manager secrets live.
+AWS_REGION = "us-east-2"
+
 
 # dev_kibana_url = 'https://e001708f0fe44a4d96341be1bf9a9943.us-east-1.aws.found.io:9243'
 # qa_kibana_url = 'https://66f6f47a3ef14711adcaa97b8385a6ed.us-east-1.aws.found.io:9243'
@@ -48,6 +51,16 @@ def get_secret(secret_name, region_name):
               f"in region '{region_name}': {e}")
         raise
     return json.loads(response["SecretString"])
+
+
+# Fetch all Kibana space IDs in the cluster. Used when '--space_id all' is
+# passed so the script can run against every space.
+def list_kibana_space_ids(headers, kibana_url):
+    kibana_space_url = f"{kibana_url}/api/spaces/space"
+    response = requests.get(kibana_space_url, headers=headers, verify=True)
+    response.raise_for_status()
+    spaces = response.json()
+    return [space["id"] for space in spaces]
 
 
 # Function to get all data views in the space ID specified
@@ -123,22 +136,31 @@ if __name__ == "__main__":
     parser = ArgumentParser(description='Automate the process of finding duplicate data views!')
     parser.add_argument('--cluster_name', default='None', choices=['dev', 'qa', 'prod', 'ccs'], required=True)
     parser.add_argument('--space_id', default='None', required=True)
-    parser.add_argument('--region', default='us-east-1', required=False,
-                        help='AWS region where the Secrets Manager secrets live.')
 
     args = parser.parse_args()
     cluster_name = args.cluster_name
     space_id = args.space_id
-    region = args.region
 
-    # Retrieve Kibana/ES credentials from AWS Secrets Manager. One secret per
-    # cluster ('elastic/kibana/dataview_cleanup_<cluster>'), each holding
-    # 'kibana_url' and 'es_api_key'.
+    # Retrieve Kibana/ES credentials from AWS Secrets Manager. The secret to use
+    # is selected by --cluster_name: 'elastic/kibana/dataview_cleanup_<cluster>'
+    # (e.g. --cluster_name qa -> 'elastic/kibana/dataview_cleanup_qa'), each
+    # holding 'kibana_url' and 'es_api_key'.
     kibana_secret_name = f"elastic/kibana/dataview_cleanup_{cluster_name}"
-    kibana_secret = get_secret(kibana_secret_name, region)
+    kibana_secret = get_secret(kibana_secret_name, AWS_REGION)
     kibana_url = kibana_secret["kibana_url"]
     api_key = kibana_secret["es_api_key"]
 
     object_types = get_object_types()
     headers = get_headers(api_key)
-    main(kibana_url, headers, space_id)
+
+    # Resolve the target space(s). '--space_id all' runs against every space in
+    # the cluster; otherwise just the single space specified.
+    if space_id == "all":
+        space_ids = list_kibana_space_ids(headers, kibana_url)
+        print(f"'--space_id all' specified: running against all {len(space_ids)} "
+              f"space(s) in cluster '{cluster_name}': {space_ids}")
+    else:
+        space_ids = [space_id]
+
+    for space_id in space_ids:
+        main(kibana_url, headers, space_id)

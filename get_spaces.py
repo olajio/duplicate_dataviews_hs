@@ -5,6 +5,10 @@ import boto3
 from botocore.exceptions import ClientError
 
 
+# AWS region where all the Secrets Manager secrets live.
+AWS_REGION = "us-east-2"
+
+
 def get_headers(api_key):
     headers = {
         'kbn-xsrf': 'true',
@@ -53,18 +57,16 @@ def list_kibana_space_ids(headers, kibana_url):
 if __name__ == "__main__":
     parser = ArgumentParser(description='Automate the process of cleaning up duplicate data views!')
     parser.add_argument('--cluster_name', default='None', choices=['dev', 'qa', 'prod', 'ccs'], required=True)
-    parser.add_argument('--region', default='us-east-1', required=False,
-                        help='AWS region where the Secrets Manager secrets live.')
 
     args = parser.parse_args()
     cluster_name = args.cluster_name
-    region = args.region
 
-    # Retrieve Kibana/ES credentials from AWS Secrets Manager. One secret per
-    # cluster ('elastic/kibana/dataview_cleanup_<cluster>'), each holding
-    # 'kibana_url' and 'es_api_key'.
+    # Retrieve Kibana/ES credentials from AWS Secrets Manager. The secret to use
+    # is selected by --cluster_name: 'elastic/kibana/dataview_cleanup_<cluster>'
+    # (e.g. --cluster_name qa -> 'elastic/kibana/dataview_cleanup_qa'), each
+    # holding 'kibana_url' and 'es_api_key'.
     kibana_secret_name = f"elastic/kibana/dataview_cleanup_{cluster_name}"
-    kibana_secret = get_secret(kibana_secret_name, region)
+    kibana_secret = get_secret(kibana_secret_name, AWS_REGION)
     kibana_url = kibana_secret["kibana_url"]
     api_key = kibana_secret["es_api_key"]
 

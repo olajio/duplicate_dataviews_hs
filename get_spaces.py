@@ -1,5 +1,12 @@
+import json
 import requests
 from argparse import ArgumentParser
+import boto3
+from botocore.exceptions import ClientError
+
+
+# AWS region where all the Secrets Manager secrets live.
+AWS_REGION = "us-east-2"
 
 
 def get_headers(api_key):
@@ -9,6 +16,22 @@ def get_headers(api_key):
         'Authorization': f'ApiKey {api_key}'
     }
     return headers
+
+
+# Retrieve a JSON secret from AWS Secrets Manager using the default credential
+# chain (IAM role / instance profile / IRSA — no inline credentials). Returns
+# the parsed secret as a dict. Secret values are never logged.
+def get_secret(secret_name, region_name):
+    client = boto3.session.Session().client(
+        service_name="secretsmanager", region_name=region_name
+    )
+    try:
+        response = client.get_secret_value(SecretId=secret_name)
+    except ClientError as e:
+        print(f"Failed to retrieve secret '{secret_name}' from AWS Secrets Manager "
+              f"in region '{region_name}': {e}")
+        raise
+    return json.loads(response["SecretString"])
 
 def list_kibana_space_ids(headers, kibana_url):
     """Fetch all Kibana spaces and list only the space IDs."""
@@ -33,12 +56,19 @@ def list_kibana_space_ids(headers, kibana_url):
 # Example usage
 if __name__ == "__main__":
     parser = ArgumentParser(description='Automate the process of cleaning up duplicate data views!')
-    parser.add_argument('--kibana_url', default='None', required=True)
-    parser.add_argument('--api_key', default='None', required=True)
+    parser.add_argument('--cluster_name', default='None', choices=['dev', 'qa', 'prod', 'ccs'], required=True)
 
     args = parser.parse_args()
-    kibana_url = args.kibana_url
-    api_key = args.api_key
+    cluster_name = args.cluster_name
+
+    # Retrieve Kibana/ES credentials from AWS Secrets Manager. The secret to use
+    # is selected by --cluster_name: 'elastic/kibana/dataview_cleanup_<cluster>'
+    # (e.g. --cluster_name qa -> 'elastic/kibana/dataview_cleanup_qa'), each
+    # holding 'kibana_url' and 'es_api_key'.
+    kibana_secret_name = f"elastic/kibana/dataview_cleanup_{cluster_name}"
+    kibana_secret = get_secret(kibana_secret_name, AWS_REGION)
+    kibana_url = kibana_secret["kibana_url"]
+    api_key = kibana_secret["es_api_key"]
 
     headers = get_headers(api_key)
 

@@ -1,57 +1,66 @@
-Quick thought on the logging question first, then I'll do the migration.
+Working notes for the GitHub migration + Secrets Manager refactor. Updated to
+reflect the final, shipped state of the scripts (invocations here match the
+current code).
 
-Ingesting these logs into Elasticsearch is a sensible call, and arguably better than GitHub for the *logs* specifically (GitHub is fine for the NDJSON backups since those are recovery artifacts you may need to re-import, but logs are operational telemetry). A few things worth deciding when you get to that card: whether you write to a dedicated index like `.kibana-dataview-cleanup-logs` (or a non-dotted `dataview-cleanup-logs` with an ILM policy, since dotted/system-ish names can get awkward), whether you ship structured JSON docs per event rather than the flat text log (so you can actually query by `space_id`, `cluster_name`, `data_view_id`, `dry_run`, action taken, etc.), and whether you keep the GitHub log check-in too or fully replace it. I'd lean toward structured docs + ILM, and dropping the GitHub log upload once ES ingest is proven. But let's park that — it's its own card.
+**Logging destination — decided**
 
-Let me do the GitHub migration now.The files came in as text rather than on disk, so I'll build the updated version from the content I have. Let me write it out with the migration applied.Parsing checks out for both hosts. Here's the migrated script.What changed (GitHub migration only — secrets refactor untouched, backup/check-in behavior preserved exactly):
+We considered ingesting the run logs into Elasticsearch (structured JSON docs +
+ILM) instead of GitHub. **Decision: keep everything as-is.** The NDJSON object
+backups and the text log file continue to be checked into the per-run GitHub
+branch; we are not moving to AWX and not shipping logs to Elasticsearch. The
+GitHub service-account PAT stays in Secrets Manager long-term.
 
-- Added a `parse_github_repo(repo_url)` helper that derives the REST API base and `owner/repo` from the repo URL. For `github.com` it returns `https://api.github.com`; for any other host (GHE) it falls back to `<host>/api/v3`. This is host-agnostic so the next host change won't require touching the upload functions.
-- Added a `get_github_headers(github_key)` helper returning the github.com token headers: `Authorization: Bearer <PAT>`, `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`.
-- Reworked both `upload_file_to_github` and `upload_file_to_existing_github` to use the API base from the helper instead of the hardcoded `https://ghe.hedgeserv.net/api/v3`, and switched every call from Basic auth (`auth=(github_username, github_key)`) to the Bearer header. `github_username` is still passed in (it's used for the branch name in `main`) but no longer used for auth inside these functions.
-- Updated the `repo_url` constant to `https://github.com/<ORG>/delete_duplicate_data_view` with a TODO — **you need to set the real org** (your `hsv-internal` org is the likely target for internal tooling, but confirm).
-- Added `from urllib.parse import urlparse` to imports.
+**GitHub migration — what changed** (backup/check-in behavior preserved exactly)
 
-I deliberately did **not** touch the `json.dumps` NameError or the `get_response.text` typos, since those are out of scope for this card — flagging again so they don't surprise you mid-test (the `json` one will fire on a dry-run that finds objects to update).
+- Added `parse_github_repo(repo_url)`: derives the REST API base and `owner/repo` from the repo URL. For `github.com` it returns `https://api.github.com`; for any other host (GHE) it falls back to `<host>/api/v3`. Host-agnostic, so the next host change won't touch the upload functions.
+- Added `get_github_headers(github_key)`: `Authorization: Bearer <PAT>`, `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`.
+- Reworked `upload_file_to_github` and `upload_file_to_existing_github` to use the helper's API base instead of the hardcoded GHE base, and switched from Basic auth to the Bearer header. `github_username` is used only for the branch name.
+- `repo_url` is `https://github.com/hsv-internal/delete_duplicate_data_view` (org confirmed and tested).
+- Added `from urllib.parse import urlparse`.
 
-One caveat to know going in: the existing-file upload still doesn't pass a blob `sha`. That's fine because each run uses a unique per-run branch and timestamped/ID-unique filenames, so paths never pre-exist on the branch. If a path ever repeats on the same branch, that PUT will 422 — not a regression, just inherited behavior.
+**Secrets Manager refactor — what changed**
 
-**Testing steps for the migration**
+- Credentials are no longer CLI args. `get_secret(secret_name, region)` (boto3, default credential chain) reads them from AWS Secrets Manager in `us-east-2`:
+  - Kibana/ES per cluster: `elastic/kibana/dataview_cleanup_<cluster>` → `kibana_url`, `es_api_key` (selected by `--cluster_name`).
+  - GitHub service account: `github_hsv_internal/itsma/service_elastic_auto_HSV` → `user` (branch name), `password` (Bearer PAT).
+- Removed `--api_key`, `--kibana_url`, `--github_username`, `--github_key`. Region is fixed (`AWS_REGION = "us-east-2"`, no `--region`).
+- `--space_id all` runs against every space in the cluster; each space gets its own branch.
+- Fixed the `get_response.text` typos and the `json.dumps` NameError. `verify_ssl` arg intentionally not added.
 
-Do these in order; the first few isolate GitHub from Kibana so you validate auth and repo access before a full run.
+Caveat still true: the existing-file upload doesn't pass a blob `sha`. Fine because each run uses a unique per-run branch and timestamped/ID-unique filenames, so paths never pre-exist. If a path ever repeats on the same branch, that PUT would 422 — inherited behavior, not a regression.
 
-1. **Provision the PAT.** Create a fine-grained PAT scoped to the target repo with Contents: read/write (it needs to create branches and create/update files). Export it: `export GH_PAT='...'`.
+**Prerequisites to run**
 
-2. **Smoke-test repo access (no script).** Confirm the base URL, token, and repo path all line up before involving the script:
-   ```
-   curl -sS -H "Authorization: Bearer $GH_PAT" \
-        -H "Accept: application/vnd.github+json" \
-        -H "X-GitHub-Api-Version: 2022-11-28" \
-        https://api.github.com/repos/<ORG>/delete_duplicate_data_view | head
-   ```
-   A 200 with repo JSON means auth + repo path are correct. A 404 usually means the PAT can't see the repo (scope/org SSO) rather than a bad path.
+- `pip install -r requirements.txt` (boto3, requests, pytz).
+- AWS credentials available via the standard chain, allowed `secretsmanager:GetSecretValue` on the five secret ARNs in `us-east-2`.
+- No GitHub PAT or Elastic API key on the command line — both come from the secrets above.
 
-3. **Unit-test the upload functions in isolation.** Import the two functions in a Python shell, point them at a throwaway file, and confirm a branch gets created and the file lands:
-   ```
-   python3 -c "
-   from delete_duplicate_data_view import upload_file_to_github
-   import os
-   open('test.txt','w').write('migration smoke test')
-   upload_file_to_github('https://github.com/<ORG>/delete_duplicate_data_view',
-       'olajio', os.environ['GH_PAT'], 'test.txt', 'all_objects/test.txt',
-       'migration-test-branch', '2026_06_23_test')
-   "
-   ```
-   Expect: "Branch ... created successfully" then "File successfully uploaded". Verify in the GitHub UI that the branch and `all_objects/test.txt` exist. Then re-run with `upload_file_to_existing_github` against `migration-test-branch` to confirm the existing-branch path works too.
+**Current invocation**
 
-4. **Full dry-run against a low-stakes space.** Run the script with `--dry_run True` against dev and a space you don't mind branching:
-   ```
-   python3 delete_duplicate_data_view.py --kibana_url '<dev_kibana_url>' \
-     --api_key '<es_api_key>' --cluster_name dev --space_id <space> \
-     --dry_run True --github_username olajio --github_key "$GH_PAT"
-   ```
-   In dry-run, the full Kibana object export still happens and gets pushed to GitHub (only the data-view *updates/deletes* are simulated), so this exercises `upload_file_to_github` (new branch + `kibana_objects.ndjson`) and the end-of-run log upload via `upload_file_to_existing_github`. Confirm the per-run branch (`olajio_dev_<space>_<timestamp>`) appears with both the NDJSON and the `log_file_*.log`.
+Single space, dry-run (default):
+```
+python3 delete_duplicate_data_view.py --cluster_name dev --space_id <space> --dry_run True
+```
 
-5. **Negative test — bad token.** Run step 2's curl with a garbage token and confirm you get a 401, so you know auth failures surface clearly rather than silently no-op.
+Every space in the cluster, applying changes:
+```
+python3 delete_duplicate_data_view.py --cluster_name prod --space_id all --dry_run False
+```
 
-6. **Cleanup.** Delete the throwaway `migration-test-branch` and any test run branches once verified.
+Helpers:
+```
+python3 get_spaces.py --cluster_name <cluster>
+python3 find_duplicate_dataviews.py --cluster_name <cluster> --space_id <space|all>
+```
 
-If steps 2–4 pass, the migration is sound and you're clear to schedule the secrets-refactor card next. Want me to draft that secrets card now, or hold until you've run these?
+In dry-run, the full Kibana object export still happens and is pushed to GitHub
+(only the data-view updates/deletes are simulated), so a dry-run still exercises
+`upload_file_to_github` (new branch + `kibana_objects.ndjson`) and the end-of-run
+log upload. Confirm the per-run branch (`<user>_<cluster>_<space>_<timestamp>`)
+appears with both the NDJSON and `log_file_*.log`.
+
+**Testing — completed**
+
+Real-environment testing was completed against live AWS + Kibana + GitHub,
+including the bad-token negative test (auth failures surface clearly rather than
+silently no-op). Delete throwaway test branches once verified.

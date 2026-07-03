@@ -590,8 +590,7 @@ if __name__ == "__main__":
     timestamp = set_timestamp()
 
     # MIGRATED: github.com replaces ghe.hedgeserv.net.
-    # TODO: confirm the correct org/repo on github.com (e.g. hsv-internal) before running.
-    repo_url = "https://github.com/oolajide_HSV/delete_duplicate_data_view"
+    repo_url = "https://github.com/hsv-internal/delete_duplicate_data_view"
 
     object_types = get_object_types()
     headers = get_headers(api_key)

@@ -25,6 +25,7 @@ GitHub service-account PAT stays in Secrets Manager long-term.
   - GitHub service account: `github_hsv_internal/itsma/service_elastic_auto_HSV` → `user` (branch name), `password` (Bearer PAT).
 - Removed `--api_key`, `--kibana_url`, `--github_username`, `--github_key`. Region is fixed (`AWS_REGION = "us-east-2"`, no `--region`).
 - `--space_id all` runs against every space in the cluster; each space gets its own branch.
+- Default data view safeguard: before deleting a duplicate, if it is the space default the default is reassigned to the kept data view of the same title (`GET`/`POST /s/<space>/api/data_views/default`) before deletion; dry-run aware. Non-default duplicates unaffected.
 - Fixed the `get_response.text` typos and the `json.dumps` NameError. `verify_ssl` arg intentionally not added.
 
 Caveat still true: the existing-file upload doesn't pass a blob `sha`. Fine because each run uses a unique per-run branch and timestamped/ID-unique filenames, so paths never pre-exist. If a path ever repeats on the same branch, that PUT would 422 — inherited behavior, not a regression.

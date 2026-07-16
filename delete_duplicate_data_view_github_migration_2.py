@@ -454,6 +454,56 @@ def delete_dataview_if_no_references(data_view_id, all_objects, kibana_url, spac
             print(f"Data view {data_view_id} has references and was NOT deleted.")
 
 
+# Get the id of the current default data view for the space (or None if unset).
+def get_default_data_view_id(kibana_url, space_id, headers):
+    default_url = f"{kibana_url}/s/{space_id}/api/data_views/default"
+    response = requests.get(default_url, headers=headers, verify=True)
+    if response.status_code == 200:
+        return response.json().get("data_view_id")
+    logging.error(f"Failed to GET the default data view for space '{space_id}'. "
+                  f"Status code: {response.status_code}, Response: {response.text}")
+    return None
+
+
+# Set the space's default data view to new_default_id. Dry-run aware.
+def set_default_data_view(kibana_url, space_id, headers, new_default_id, dry_run):
+    default_url = f"{kibana_url}/s/{space_id}/api/data_views/default"
+    payload = {"data_view_id": new_default_id, "force": True}
+    if dry_run:
+        logging.info(f"[DRY-RUN] Would set the default data view for space '{space_id}' to '{new_default_id}'")
+        return
+    response = requests.post(default_url, headers=headers, json=payload)
+    if response.status_code == 200:
+        logging.info(f"Default data view for space '{space_id}' updated to '{new_default_id}'.")
+    else:
+        logging.error(f"Failed to set default data view to '{new_default_id}' for space '{space_id}'. "
+                      f"Status code: {response.status_code}, Response: {response.text}")
+
+
+# Before deleting a duplicate data view, make sure we never delete the space's
+# default data view without moving the default first. If the data view about to
+# be deleted (delete_id) is the current space default, reassign the default to
+# the kept data view (keep_id) from the same title group. As a safety guard, the
+# reassignment only happens when the kept data view shares the same title as the
+# one being deleted.
+def reassign_default_if_deleting_default(kibana_url, space_id, headers, delete_id, keep_id, id_to_title, dry_run):
+    current_default_id = get_default_data_view_id(kibana_url, space_id, headers)
+    if current_default_id != delete_id:
+        # The data view being deleted is not the space default; nothing to do.
+        return
+    delete_title = id_to_title.get(delete_id)
+    keep_title = id_to_title.get(keep_id)
+    if keep_id is None or keep_title is None or keep_title != delete_title:
+        logging.error(f"NOT reassigning default: the data view to keep ('{keep_id}', title '{keep_title}') "
+                      f"does not share the same title as the default data view being deleted "
+                      f"('{delete_id}', title '{delete_title}'). Skipping default reassignment for safety.")
+        return
+    logging.warning(f"Data view '{delete_id}' (title '{delete_title}') is the DEFAULT data view for space "
+                    f"'{space_id}'. Reassigning the space default to the kept data view '{keep_id}' "
+                    f"(same title) before deletion.")
+    set_default_data_view(kibana_url, space_id, headers, keep_id, dry_run)
+
+
 # main
 def main(kibana_url, headers, space_id, dry_run):
     log_file_name = setup_log_file(timestamp)
@@ -461,6 +511,9 @@ def main(kibana_url, headers, space_id, dry_run):
     updated_objects_count = 0
     data_views_to_be_deleted = []
     updated_objects = []
+    # Maps each data view id to be deleted -> the kept data view id in its group,
+    # used to reassign the space default if the deleted one is the default.
+    delete_to_keep = {}
 
 
     print(f"RUNNING THE SCRIPT FOR SPACE: '{space_id}' IN ELASTIC CLUSTER: '{cluster_name}'")
@@ -473,6 +526,9 @@ def main(kibana_url, headers, space_id, dry_run):
     repo_file_path = f"all_objects/{local_file_path}"
     upload_file_to_github(repo_url, github_username, github_key, local_file_path, repo_file_path, github_branch, timestamp)
     data_views = get_all_dataviews(space_id, headers, kibana_url)
+    # Map every data view id to its title so we can safely reassign the space
+    # default (only within the same title group) if the default is deleted.
+    id_to_title = {dv["id"]: dv["title"] for dv in data_views}
     duplicates = find_duplicated_data_views(data_views)
     print("")
     if not duplicates:
@@ -491,6 +547,7 @@ def main(kibana_url, headers, space_id, dry_run):
                 most_referenced_id = max(reference_counts, key=reference_counts.get)
                 if id != most_referenced_id:
                     data_views_to_be_deleted.append(id)
+                    delete_to_keep[id] = most_referenced_id
                     for object in all_objects:
                         object_id = object.get("id")
                         object_type = object.get("type")
@@ -542,6 +599,11 @@ def main(kibana_url, headers, space_id, dry_run):
             dataview_local_file = f"data_view_{view_id}_backup.ndjson"
             dataview_repo_file_path = dataview_local_file
             upload_file_to_existing_github(repo_url, github_username, github_key, dataview_local_file, dataview_repo_file_path, github_branch, timestamp)
+
+            # If this duplicate is the space's default data view, move the default
+            # to the kept data view (same title) before deleting it.
+            reassign_default_if_deleting_default(kibana_url, space_id, headers, view_id,
+                                                 delete_to_keep.get(view_id), id_to_title, dry_run)
 
             # Delete each data view
             delete_dataview_if_no_references(view_id, all_objects, kibana_url, space_id, headers, dry_run)

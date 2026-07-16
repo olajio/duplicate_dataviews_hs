@@ -100,6 +100,9 @@ API keys or tokens are passed on the command line.
         ||   | For each leftover duplicate:                  |   ||
         ||   |   - backup -> data_view_<id>_backup.ndjson    |   ||
         ||   |   - upload backup to the GitHub branch        |   ||
+        ||   |   - if it is the space DEFAULT data view,     |   ||
+        ||   |     reassign default to the kept data view    |   ||
+        ||   |     (same title)       [simulated in dry-run] |   ||
         ||   |   - if no references remain: prompt Y/N,      |   ||
         ||   |     then DELETE        [simulated in dry-run] |   ||
         ||   +----------------------+------------------------+   ||
@@ -121,6 +124,15 @@ API keys or tokens are passed on the command line.
 > In **dry-run** (the default), the object export and all GitHub uploads still
 > happen — only the data-view *updates* and *deletes* are simulated. This lets
 > you review exactly what would change while still producing the backups.
+
+### Default data view safeguard
+
+Before deleting a duplicate, the script checks whether it is the **default data
+view** for the space. If it is, the space default is first reassigned to the
+retained (kept) data view from the same title group — but only after confirming
+that the kept data view shares the **same title** as the one being deleted. This
+prevents a run from leaving the space without a valid default. If the duplicate
+being deleted is not the default, nothing about the default changes.
 
 ---
 

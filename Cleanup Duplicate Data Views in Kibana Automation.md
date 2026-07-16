@@ -238,6 +238,30 @@ you later need to audit the run or restore objects from the backups. When
 
 ---
 
+## Default data view safeguard
+
+A Kibana space has a single **default data view**. To avoid leaving a space
+without a valid default, the script checks — for each duplicate it is about to
+delete — whether that data view is the current space default:
+
+- **If the data view being deleted is the space default,** the script first
+  reassigns the space default to the retained (kept) data view from the **same
+  title group**, and only then proceeds to delete. As a safety guard, the
+  reassignment happens only when the kept data view has the **same title** as the
+  one being deleted; otherwise the default is left unchanged and the situation is
+  logged.
+- **If the data view being deleted is not the default,** nothing about the
+  default changes and the normal delete flow continues.
+
+For example, if `filebeat-*` has duplicates `111` and `222`, the algorithm keeps
+`111` and deletes `222`. If `222` was the space default, the default is first set
+to `111` (same title `filebeat-*`) before `222` is deleted. In dry-run, the
+script logs the reassignment it *would* make without changing anything.
+
+The Kibana endpoints used are `GET`/`POST /s/<space_id>/api/data_views/default`.
+
+---
+
 ## Expected results / validation
 
 Once the script runs, it cleans up duplicated data views after updating the

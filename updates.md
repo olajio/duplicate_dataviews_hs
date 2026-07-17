@@ -49,3 +49,10 @@ below are **DONE** unless marked otherwise.
 **Testing**
 
 - Real-environment testing completed against live AWS + Kibana + GitHub, including the bad-token negative test.
+
+**Follow-up: preserve the space default data view (delete script) — DONE**
+
+- Problem found in dev testing: a run deleted a duplicate that happened to be the space's default data view, leaving the space without a valid default.
+- Fix: before deleting each duplicate, `reassign_default_if_deleting_default()` checks whether it is the current space default (`GET /s/<space>/api/data_views/default`). If so, it reassigns the default to the kept data view from the same title group (`POST .../data_views/default`, `force: true`) — only when the kept data view shares the same title, otherwise it logs and skips for safety. Dry-run aware (logs, no change). Non-default duplicates are unaffected.
+- Added helpers `get_default_data_view_id()` and `set_default_data_view()`; `main()` now tracks `delete_to_keep` (deleted id -> kept id) and `id_to_title`.
+- Docs updated: `README.md` (flowchart step + safeguard note) and the SharePoint runbook (`Cleanup Duplicate Data Views in Kibana Automation.md`).
